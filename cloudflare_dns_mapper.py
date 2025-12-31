@@ -6,6 +6,7 @@ Creates a hierarchical mindmap of DNS records based on their relationships.
 
 import sys
 import json
+import argparse
 from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
 from typing import Dict, List, Set
@@ -179,7 +180,7 @@ class CloudflareDNSMapper:
                 self.write_hierarchy(child, children_map, record_map, output, 
                                    level + 1, visited)
     
-    def generate_mindmap(self, output_file: str = "dns_hierarchy.md"):
+    def generate_mindmap(self, output_file: str = "dns_hierarchy.md", exclude_txt: bool = False):
         """Generate the DNS hierarchy mindmap."""
         print("Fetching zones...")
         zones = self.get_zones()
@@ -193,6 +194,19 @@ class CloudflareDNSMapper:
             records = self.get_dns_records(zone_id)
             all_records.extend(records)
             print(f"  Found {len(records)} record(s)")
+        
+        # Filter out TXT records and related verification records if requested
+        if exclude_txt:
+            txt_types = ["TXT", "SPF", "DKIM", "DMARC"]
+            original_count = len(all_records)
+            all_records = [r for r in all_records if r["type"] not in txt_types]
+            # Also filter out common verification/key subdomains
+            all_records = [r for r in all_records if not any(
+                prefix in r["name"].lower() for prefix in ["_dmarc", "_domainkey", "_acme", "_verification"]
+            )]
+            filtered_count = original_count - len(all_records)
+            if filtered_count > 0:
+                print(f"  Filtered out {filtered_count} TXT/verification record(s)")
         
         print(f"\nTotal records: {len(all_records)}")
         print("Building hierarchy...")
@@ -255,17 +269,28 @@ class CloudflareDNSMapper:
 
 
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: python cloudflare_dns_mapper.py <API_TOKEN> [output_file.md]")
-        print("\nExample:")
-        print("  python cloudflare_dns_mapper.py your_api_token_here dns_map.md")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(
+        description="Generate a hierarchical mindmap of Cloudflare DNS records",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python cloudflare_dns_mapper.py your_api_token_here
+  python cloudflare_dns_mapper.py your_api_token_here dns_map.md
+  python cloudflare_dns_mapper.py your_api_token_here --notxt
+  python cloudflare_dns_mapper.py your_api_token_here dns_map.md --notxt
+        """
+    )
     
-    api_token = sys.argv[1]
-    output_file = sys.argv[2] if len(sys.argv) > 2 else "dns_hierarchy.md"
+    parser.add_argument("api_token", help="Cloudflare API token")
+    parser.add_argument("output_file", nargs="?", default="dns_hierarchy.md",
+                       help="Output markdown file (default: dns_hierarchy.md)")
+    parser.add_argument("--notxt", action="store_true",
+                       help="Exclude TXT records and verification records (_dmarc, _domainkey, etc.)")
     
-    mapper = CloudflareDNSMapper(api_token)
-    mapper.generate_mindmap(output_file)
+    args = parser.parse_args()
+    
+    mapper = CloudflareDNSMapper(args.api_token)
+    mapper.generate_mindmap(args.output_file, exclude_txt=args.notxt)
 
 
 if __name__ == "__main__":
